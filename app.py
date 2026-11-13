@@ -306,14 +306,61 @@ def julian_day(dt):
 
 
 def solar_position_mars(dt):
+    """Approximate Mars solar position (Allison & McEwen 2000 / Mars24)."""
     jd = julian_day(dt)
     d = jd - 2451545.0
 
-    mean_anomaly = math.radians((19.373 + 0.52402073 * d) % 360)
-    perihelion = math.radians(336.04084 + 0.00000001 * d)
+    mean_anomaly_deg = (19.3871 + 0.52402073 * d) % 360
+    mean_anomaly = math.radians(mean_anomaly_deg)
+    alpha_fms = 270.3863 + 0.52403840 * d
+
+    # Planetary perturbations (small corrections)
+    pbs_terms = (
+        (0.0071, 2.2353, 49.409),
+        (0.0057, 2.7543, 168.173),
+        (0.0039, 1.1177, 191.837),
+        (0.0037, 15.7866, 21.736),
+        (0.0021, 2.1354, 15.704),
+        (0.0020, 2.4694, 95.528),
+        (0.0018, 32.8493, 49.095),
+    )
+    pbs = sum(
+        amp * math.cos(math.radians(0.985626 * d / tau + phase))
+        for amp, tau, phase in pbs_terms
+    )
+
+    # Equation of center (true anomaly minus mean anomaly), degrees
+    equation_of_center = (
+        (10.691 + 3.0e-7 * d) * math.sin(mean_anomaly)
+        + 0.623 * math.sin(2 * mean_anomaly)
+        + 0.050 * math.sin(3 * mean_anomaly)
+        + 0.005 * math.sin(4 * mean_anomaly)
+        + 0.0005 * math.sin(5 * mean_anomaly)
+        + pbs
+    )
+
+    # Areocentric solar longitude Ls (0 = northern spring equinox)
+    ls_deg = (alpha_fms + equation_of_center) % 360
+    ls = math.radians(ls_deg)
+
+    # Solar declination (degrees)
+    declination_deg = (
+        math.degrees(math.asin(0.42565 * math.sin(ls)))
+        + 0.25 * math.sin(ls)
+    )
+
+    # Equation of time (Mars solar hours)
+    eot_deg = (
+        2.861 * math.sin(2 * ls)
+        - 0.071 * math.sin(4 * ls)
+        + 0.002 * math.sin(6 * ls)
+        - equation_of_center
+    )
+    equation_of_time_hours = eot_deg / 15.0
+
+    # Sun distance from Kepler's equation
     eccentricity = 0.0934
     semi_major_axis_au = 1.523679
-
     eccentric_anomaly = mean_anomaly
     for _ in range(8):
         eccentric_anomaly -= (
@@ -323,30 +370,8 @@ def solar_position_mars(dt):
         ) / (
             1 - eccentricity * math.cos(eccentric_anomaly)
         )
-
-    true_anomaly = 2 * math.atan2(
-        math.sqrt(1 + eccentricity) * math.sin(eccentric_anomaly / 2),
-        math.sqrt(1 - eccentricity) * math.cos(eccentric_anomaly / 2),
-    )
-
-    heliocentric_longitude = true_anomaly + perihelion
     radius_au = semi_major_axis_au * (
         1 - eccentricity * math.cos(eccentric_anomaly)
-    )
-
-    obliquity = math.radians(25.19)
-
-    declination = math.asin(
-        math.sin(heliocentric_longitude) * math.sin(obliquity)
-    )
-
-    right_ascension = math.atan2(
-        math.cos(obliquity) * math.sin(heliocentric_longitude),
-        math.cos(heliocentric_longitude),
-    )
-
-    equation_of_time_deg = (
-        math.degrees(heliocentric_longitude - right_ascension)
     )
 
     solar_constant_earth = 1361.0
@@ -356,8 +381,9 @@ def solar_position_mars(dt):
 
     return {
         "julian_day": jd,
-        "solar_declination_deg": math.degrees(declination),
-        "equation_of_time_deg": equation_of_time_deg,
+        "solar_longitude_ls_deg": ls_deg,
+        "solar_declination_deg": declination_deg,
+        "equation_of_time_hours": equation_of_time_hours,
         "mars_sun_distance_au": radius_au,
         "top_of_atmosphere_irradiance_w_m2": (
             top_of_atmosphere_irradiance
@@ -416,13 +442,17 @@ def get_mars_solar(
                 - math.sin(latitude) * math.sin(declination)
             ) / denominator
 
+        daylight_mars_hours = None
+
         if cos_hour_angle >= 1:
             daylight_hours = 0.0
+            daylight_mars_hours = 0.0
             sunrise = None
             sunset = None
             day_status = "polar_night_or_no_sunrise"
         elif cos_hour_angle <= -1:
-            daylight_hours = 24.0
+            daylight_hours = 24.6597
+            daylight_mars_hours = 24.0
             sunrise = None
             sunset = None
             day_status = "continuous_daylight"
@@ -432,19 +462,15 @@ def get_mars_solar(
             )
 
             mars_solar_day_hours = 24.6597
+            # Earth hours (kept for game rules / compatibility)
             daylight_hours = (
                 mars_solar_day_hours * hour_angle_deg / 180.0
             )
+            # Mars solar hours (24 per sol), local true solar time
+            daylight_mars_hours = hour_angle_deg / 7.5
 
-            local_noon = (
-                12.0
-                - longitude_deg / 15.0
-                - position["equation_of_time_deg"] / 15.0
-            ) % 24.0
-
-            half_day = daylight_hours / 2.0
-            sunrise = solar_time_string(local_noon - half_day)
-            sunset = solar_time_string(local_noon + half_day)
+            sunrise = solar_time_string(12.0 - daylight_mars_hours / 2.0)
+            sunset = solar_time_string(12.0 + daylight_mars_hours / 2.0)
             day_status = "calculated"
 
         return {
@@ -468,6 +494,17 @@ def get_mars_solar(
             "sunrise": sunrise,
             "sunset": sunset,
             "day_length_hours": round(daylight_hours, 3),
+            "day_length_mars_solar_hours": round(daylight_mars_hours, 3),
+            "time_basis": (
+                "sunrise/sunset are local true solar time in Mars solar "
+                "hours (24 per sol); day_length_hours is in Earth hours"
+            ),
+            "solar_longitude_ls_deg": round(
+                position["solar_longitude_ls_deg"], 2
+            ),
+            "equation_of_time_hours": round(
+                position["equation_of_time_hours"], 4
+            ),
             "solar_declination_deg": round(
                 position["solar_declination_deg"], 3
             ),
