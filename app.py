@@ -5,13 +5,11 @@ from datetime import datetime, timezone
 
 import gradio as gr
 import requests
-import spaces
-import torch
 
 
 # ============================================================
 # MARS: THE LAST FRONTIER
-# Full backend - Gradio + ZeroGPU
+# Full backend - Gradio (Render deployment)
 # ============================================================
 
 APP_NAME = "MARS: THE LAST FRONTIER"
@@ -711,7 +709,7 @@ def search_nasa_mineral_products(keywords="Mars CRISM mineral", limit=10):
             "data_type": "unavailable",
             "is_live": False,
             "notice": (
-                "PDS search failed. Check the Space logs and the archive "
+                "PDS search failed. Check the service logs and the archive "
                 "service. No mineral location or reserve was fabricated."
             ),
         }
@@ -1025,7 +1023,6 @@ def api_health():
         "status": "ok",
         "game": APP_NAME,
         "generated_at_utc": utc_now(),
-        "zerogpu_required": True,
         "modules": [
             "atmosphere",
             "environment",
@@ -1102,36 +1099,7 @@ def api_minerals_search(keywords, limit):
 
 
 # ============================================================
-# 10. ZEROGPU
-# ============================================================
-
-@spaces.GPU(duration=5)
-def zerogpu_test():
-    if not torch.cuda.is_available():
-        return {
-            "status": "error",
-            "zerogpu": "unavailable",
-            "notice": (
-                "CUDA is not available in this execution. "
-                "Check ZeroGPU configuration and Space logs."
-            ),
-        }
-
-    tensor = torch.tensor(
-        [1.0, 2.0, 3.0],
-        device=torch.device("cuda"),
-    )
-
-    return {
-        "status": "success",
-        "zerogpu": "connected",
-        "gpu_name": torch.cuda.get_device_name(0),
-        "test_result": torch.sum(tensor).item(),
-    }
-
-
-# ============================================================
-# 11. GRADIO UI
+# 10. GRADIO UI
 # ============================================================
 
 with gr.Blocks(title=APP_NAME) as demo:
@@ -1140,7 +1108,7 @@ with gr.Blocks(title=APP_NAME) as demo:
 # 🚀 {APP_NAME}
 
 NASA science-data backend with Radiation, Solar, Farming, Farm Light (PPFD),
-Bunker, Underground Minerals and ZeroGPU.
+Bunker and Underground Minerals.
 
 **Data rules:** historical is not live; calculated is not measured;
 PPFD stage bands are educational targets, not Mars surface measurements;
@@ -1352,21 +1320,9 @@ underground mineral deposits or extractable reserves.
             api_name="minerals_catalog",
         )
 
-    with gr.Tab("ZeroGPU"):
-        gr.Markdown(
-            "Click the button to run a small CUDA operation through "
-            "`@spaces.GPU`. NASA HTTP requests do not require GPU."
-        )
-        gpu_button = gr.Button("Run ZeroGPU Test")
-        gpu_output = gr.JSON(label="ZeroGPU Status")
-        gpu_button.click(
-            zerogpu_test, inputs=[], outputs=gpu_output,
-            api_name="zerogpu_check",
-        )
-
 
 demo.queue()
 demo.launch(
     server_name="0.0.0.0",
-    server_port=7860,
+    server_port=int(os.getenv("PORT", 7860)),
 )
