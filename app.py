@@ -1368,8 +1368,116 @@ underground mineral deposits or extractable reserves.
         )
 
 
-demo.queue()
-demo.launch(
-    server_name="0.0.0.0",
-    server_port=int(os.getenv("PORT", 7860)),
+# ============================================================
+# 11. PLAIN REST API (for the game) + GRADIO DASHBOARD
+# ============================================================
+# The game uses these simple GET routes (no queue / SSE sessions).
+# The Gradio dashboard stays available at the root URL.
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+api = FastAPI(title=APP_NAME + " API")
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+
+@api.get("/ping")
+def rest_ping():
+    return {"status": "ok"}
+
+
+@api.get("/api/health")
+def rest_health():
+    return api_health()
+
+
+@api.get("/api/atmosphere")
+def rest_atmosphere():
+    return get_atmosphere()
+
+
+@api.get("/api/environment")
+def rest_environment():
+    return get_mars_environment()
+
+
+@api.get("/api/radiation")
+def rest_radiation():
+    return get_mars_radiation()
+
+
+@api.get("/api/solar")
+def rest_solar(
+    latitude_deg: float = BASE_LATITUDE_DEG,
+    longitude_deg: float = BASE_LONGITUDE_DEG,
+    date_utc: str = "",
+):
+    return get_mars_solar(latitude_deg, longitude_deg, date_utc)
+
+
+@api.get("/api/farming")
+def rest_farming(heating_on: bool = False, grow_lights_on: bool = False):
+    return get_farming(heating_on, grow_lights_on)
+
+
+@api.get("/api/farm_light")
+def rest_farm_light(stage: str = "vegetative", lamp_ppfd: float = 300):
+    return get_farm_light(stage=stage, lamp_ppfd=lamp_ppfd)
+
+
+@api.get("/api/bunker")
+def rest_bunker(shielding: float = 0, integrity: float = 100):
+    return get_bunker(shielding, integrity)
+
+
+@api.get("/api/minerals")
+def rest_minerals():
+    return get_underground_minerals()
+
+
+@api.get("/api/minerals/catalog")
+def rest_minerals_catalog():
+    return get_mineral_catalog()
+
+
+@api.get("/api/minerals/search")
+def rest_minerals_search(keywords: str = "Mars CRISM mineral", limit: int = 10):
+    return search_nasa_mineral_products(keywords, limit)
+
+
+@api.get("/api/minerals/location")
+def rest_minerals_location(location: str = ""):
+    return get_minerals_by_location(location)
+
+
+@api.get("/api/all")
+def rest_all(
+    shielding: float = 0,
+    integrity: float = 100,
+    heating_on: bool = False,
+    grow_lights_on: bool = False,
+    farm_stage: str = "vegetative",
+    lamp_ppfd: float = 300,
+):
+    return get_all_mars_data(
+        shielding, integrity, heating_on, grow_lights_on,
+        farm_stage, lamp_ppfd,
+    )
+
+
+# REST routes are registered first; Gradio is mounted last at "/"
+app = gr.mount_gradio_app(api, demo.queue(), path="/")
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 7860)),
+    )
