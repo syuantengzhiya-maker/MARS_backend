@@ -1,4 +1,2 @@
-gradio
-requests
-spaces
-torch
+gradio>=4.44.0
+requests>=2.31.0
