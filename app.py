@@ -17,6 +17,7 @@ NASA_API_KEY = os.getenv("NASA_API_KEY", "DEMO_KEY")
 
 REQUEST_TIMEOUT = 15
 CACHE_TTL = 900
+INSIGHT_CACHE_TTL = 6 * 3600  # InSight data is historical
 CACHE = {}
 
 NASA_INSIGHT_URL = "https://api.nasa.gov/insight_weather/"
@@ -47,25 +48,32 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def cached_get_json(url, params=None, cache_key=None):
+def cached_get_json(url, params=None, cache_key=None, ttl=None):
     key = cache_key or (url + repr(sorted((params or {}).items())))
     now = time.time()
+    ttl = CACHE_TTL if ttl is None else ttl
 
     cached = CACHE.get(key)
-    if cached and now - cached["time"] < CACHE_TTL:
+    if cached and now - cached["time"] < ttl:
         return cached["data"], True
 
-    response = requests.get(
-        url,
-        params=params,
-        timeout=REQUEST_TIMEOUT,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        },
-    )
-    response.raise_for_status()
-    data = response.json()
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=REQUEST_TIMEOUT,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception:
+        # Upstream failed: reuse the last good (stale) response if any
+        if cached:
+            return cached["data"], True
+        raise
 
     CACHE[key] = {"time": now, "data": data}
     return data, False
@@ -136,6 +144,7 @@ def get_mars_environment():
                 "ver": "1.0",
             },
             cache_key="nasa_insight_weather",
+            ttl=INSIGHT_CACHE_TTL,
         )
 
         sols = data.get("sol_keys", [])
@@ -211,6 +220,7 @@ def get_mars_environment():
                 "direction_degrees": None,
             },
             "fallback_reason": type(exc).__name__,
+            "fallback_detail": str(exc)[:300],
             "notice": (
                 "InSight weather retrieval failed. Weather values remain "
                 "null rather than substituting unrelated measurements."
